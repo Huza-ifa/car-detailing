@@ -1,0 +1,15 @@
+# Netlify cache rules. Static export copies this file to out/_headers.
+# Hashed build output is safe to cache forever; media filenames are not
+# hashed, so they get a shorter fresh window with stale-while-revalidate.
+
+/_next/static/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/img/*
+  Cache-Control: public, max-age=604800, stale-while-revalidate=604800
+
+/seq/*
+  Cache-Control: public, max-age=604800, stale-while-revalidate=604800
+
+/frames/*
+  Cache-Control: public, max-age=604800, stale-while-revalidate=604800

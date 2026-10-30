@@ -1,0 +1,234 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Design tokens — keep in sync with tailwind.config.ts */
+  --background: #07090c;
+  --surface: #0e1217;
+  --line: rgba(255, 255, 255, 0.08);
+  --ink: #e8ecf1;
+  --muted: #8a94a3;
+  --accent: #22d3ee;
+  --warm: #f59e0b;
+
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    @apply border-line;
+  }
+
+  html {
+    @apply bg-background text-ink;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background font-sans text-ink antialiased;
+    min-height: 100%;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply font-display uppercase;
+  }
+
+  ::selection {
+    background: rgba(34, 211, 238, 0.28);
+    color: var(--ink);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
+}
+
+/* Car framing — kept in sync with the GSAP mobile breakpoint (max-width: 768px,
+   inclusive), which is 1px wider than the Tailwind max-md: variant. Landscape
+   masters position the car left of center, so mobile shifts the crop window left. */
+@media (max-width: 768px) {
+  #wash {
+    --car-focus: 40% 50%;
+  }
+}
+
+@layer components {
+  .section-shell {
+    @apply relative w-full border-t border-line;
+  }
+
+  .container-site {
+    @apply mx-auto w-full max-w-site px-6 md:px-10 lg:px-16;
+  }
+}
+
+@layer utilities {
+  /*
+   * Full-screen pin stages. Declared in CSS (not Tailwind arbitrary values)
+   * so each rule can carry a 100vh FALLBACK before the 100svh — browsers
+   * without svh support still get a correctly sized stage, and the mobile
+   * address bar never causes jumps where svh is supported. Replaces the
+   * h-[100svh] / motion-reduce:h-[72svh] combination on the scene stages.
+   */
+  .stage-full {
+    height: 100vh;
+  }
+
+  @supports (height: 100svh) {
+    .stage-full {
+      height: 100svh;
+    }
+  }
+
+  .text-display {
+    font-family: var(--font-display), Impact, sans-serif;
+    font-size: clamp(3.5rem, 12vw, 10rem);
+    line-height: 0.86;
+    letter-spacing: -0.02em;
+    text-transform: uppercase;
+  }
+
+  /* Supporting display scale (~60% of .text-display) — used where a display
+     line must punctuate, not dominate: the hero's post-wash swap headline. */
+  .text-display-sub {
+    font-family: var(--font-display), Impact, sans-serif;
+    font-size: clamp(2.5rem, 7vw, 6rem);
+    line-height: 0.9;
+    letter-spacing: -0.02em;
+    text-transform: uppercase;
+  }
+
+  .text-eyebrow {
+    font-size: 0.6875rem;
+    line-height: 1;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+  }
+
+  /* Mobile legibility floor (AGENTS §5): labels read at 14px on small
+     screens; the 11px editorial size returns at md+ (769px+). */
+  @media (max-width: 768px) {
+    .text-eyebrow {
+      font-size: 0.875rem;
+    }
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .text-pretty {
+    text-wrap: pretty;
+  }
+
+  /*
+   * Light sweep across the outlined brand line, every 6s. The sheen is a
+   * gradient clipped to the glyphs (background-clip: text) so the only thing
+   * that animates is background-position on a thin text layer — no layout,
+   * no compositing of large surfaces. Collapsed by the reduced-motion rule.
+   */
+  .brand-sheen {
+    color: transparent;
+    -webkit-text-stroke: 1px rgba(232, 236, 241, 0.16);
+    background-image: linear-gradient(
+      110deg,
+      rgba(232, 236, 241, 0) 42%,
+      rgba(232, 236, 241, 0.3) 50%,
+      rgba(232, 236, 241, 0) 58%
+    );
+    background-repeat: no-repeat;
+    background-size: 400% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: brand-sheen 6s linear infinite;
+  }
+}
+
+@keyframes brand-sheen {
+  0%,
+  55% {
+    background-position: 135% 0;
+  }
+  85%,
+  100% {
+    background-position: -35% 0;
+  }
+}
+
+/*
+ * Lenis
+ * Recommended base styles. Smoothing is applied by the provider only when the
+ * user has not requested reduced motion.
+ */
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+
+.lenis.lenis-smooth iframe {
+  pointer-events: none;
+}
+
+/*
+ * Reduced motion: collapse CSS transitions/animations. GSAP scenes must still
+ * opt into their static end state explicitly (see AGENTS.md).
+ */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto !important;
+  }
+
+  /* Reduced motion gets the shorter static stage (was motion-reduce:h-[72svh]). */
+  .stage-full {
+    height: 72vh;
+  }
+
+  @supports (height: 72svh) {
+    .stage-full {
+      height: 72svh;
+    }
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* MacroReveal's stage is shorter on narrow screens (max-md:h-[72svh] before
+   the utilities existed). Declared after .stage-full so it wins at ≤768px. */
+@media (max-width: 768px) {
+  .stage-mobile-short {
+    height: 72vh;
+  }
+
+  @supports (height: 72svh) {
+    .stage-mobile-short {
+      height: 72svh;
+    }
+  }
+}
+
+/* Poster-under-canvas failsafe pass (Payoff + CoatingScene). */
