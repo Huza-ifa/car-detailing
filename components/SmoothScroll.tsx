@@ -53,9 +53,20 @@ export default function SmoothScroll({ children }: { children: ReactNode }) {
     });
 
     let cancelled = false;
-    document.fonts?.ready.then(() => {
-      if (!cancelled) ScrollTrigger.refresh();
-    });
+
+    // ONE stable refresh after the page settles: fonts ready AND window
+    // load (posters decoded) funnel into a single debounced
+    // ScrollTrigger.refresh() — never one refresh per event.
+    let stableTimer: number | undefined;
+    const scheduleStableRefresh = () => {
+      window.clearTimeout(stableTimer);
+      stableTimer = window.setTimeout(() => {
+        if (!cancelled) ScrollTrigger.refresh();
+      }, 350);
+    };
+    document.fonts?.ready.then(() => scheduleStableRefresh());
+    if (document.readyState === "complete") scheduleStableRefresh();
+    else window.addEventListener("load", scheduleStableRefresh, { once: true });
 
     // Debounced manual refresh for resize + orientation change (mobile
     // rotation) — belt and braces with ScrollTrigger's own resize handling.
@@ -72,6 +83,8 @@ export default function SmoothScroll({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
       window.clearTimeout(refreshTimer);
+      window.clearTimeout(stableTimer);
+      window.removeEventListener("load", scheduleStableRefresh);
       window.removeEventListener("resize", scheduleRefresh);
       window.removeEventListener("orientationchange", scheduleRefresh);
       window.cancelAnimationFrame(refreshFrame);

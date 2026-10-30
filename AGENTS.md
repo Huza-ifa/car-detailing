@@ -101,15 +101,21 @@ netlify.toml           Netlify deploy: builds static export from /out
                         parallax/particles on slow devices); stamps html.low-perf
   washParticles.ts      "use client"-style canvas engine for the WashScene wipe (dynamic import)
   frameSequence.ts      Shared canvas frame-sequence player (CoatingScene + Payoff):
-                        DPR-capped cover-fit, rAF-batched draws, IO-gated
-                        sequential preload, optional load-threshold gate
+                        DPR-capped cover-fit, single gsap.ticker draw queue
+                        (dirty-flag, draws only on index change), IO-gated
+                        batched decode (10/batch, requestIdleCallback between),
+                        createImageBitmap with windowed release (±16 frames,
+                        re-decode on demand), optional load-threshold gate
   utils.ts              cn(), formatPrice(), priceForVehicle()
 
 /public/img              Optimized AVIF/WebP assets; see public/img/README.md
-/public/seq/wash, /wash-m FFmpeg-extracted wash video frames (scrubbed by WashScene)
+/public/seq/wash, /wash-m FFmpeg wash-video frames, scrubbed img-src swap by WashScene
+                        (desktop 80 / mobile 96; desktop subsampled to ~12fps eq.)
 /public/frames/coating, /coating-m FFmpeg coating-wipe frame sequence (scrubbed canvas
-                        player in CoatingScene) + edge.json measured wipe-edge map
-/public/frames/sun, /sun-m FFmpeg sun-flood frame sequence (scrubbed canvas player in Payoff)
+                        player in CoatingScene; desktop 60 / mobile 60) + edge.json
+                        measured wipe-edge map (per-frame arrays, subsampled in lockstep)
+/public/frames/sun, /sun-m FFmpeg sun-flood frame sequence (scrubbed canvas player in
+                        Payoff; desktop 72 / mobile 72; desktop subsampled to ~12fps eq.)
 ```
 
 Rules:
@@ -320,7 +326,7 @@ Scene transitions are **triggered timelines**, not long scrubs:
 
 - `next/image` for **every** raster image except scrub-sequence sprites: the
   WashScene frame sequence swaps a single `<img>`'s `src` (still with explicit
-  width/height) because per-frame `next/image` optimization of 120 identical
+  width/height) because per-frame `next/image` optimization of 80 identical
   16:9 JPEG/WebP frames adds nothing. Everything else uses `next/image`.
 - Production is a **Next.js static export** (`output: "export"`, images
   `unoptimized`): no API routes or middleware exist, and every route is
@@ -330,9 +336,25 @@ Scene transitions are **triggered timelines**, not long scrubs:
   keep explicit `width`/`height`.
 - Images are AVIF/WebP (`next.config.mjs` formats, in that order). Source assets live in
   `/public/img`.
-- No `priority` images: the opening scene is a canvas frame sequence, not a
-  single `<img>`; everything raster uses `loading="lazy"` (default) and
-  accurate `sizes`.
+- Frame loading strategy (all scrub sequences): IO-gated — nothing loads at page
+  load; frames decode in batches of 10 with `requestIdleCallback` between batches;
+  frame 1 paints as soon as it decodes (DOM poster `<img>` underneath as failsafe).
+  Frames decode to right-sized `createImageBitmap`s (width-capped) with windowed
+  release — only ±16 frames around the current index stay decoded; far frames are
+  closed and re-decoded on demand (HTTP-cached). Desktop sets >60 frames are
+  subsampled to ~12fps equivalent (first + last kept): wash 120→80, coating 90→60,
+  sun 108→72; `edge.json` subsampled in lockstep.
+- Canvas draws ride the shared `gsap.ticker` (no per-player rAF loops): draws fire
+  only when the frame index actually changes, DPR capped at 1.5 (1.25 low-core),
+  all drawing stops while a scene is off-screen.
+- Wash particles: ≤40 desktop, ≤15 mobile, only animate while the wash stage is
+  visible, skipped on low-perf devices.
+- `ScrollTrigger.refresh()` runs once after the page settles — fonts-ready and
+  window-load funnel into a single debounced refresh in SmoothScroll, plus the
+  debounced resize handler. Never one refresh per event.
+- Raster priority: Payoff's opening poster `<img>` is the LCP element and uses
+  `priority`; the CoatingScene poster and every other raster image use
+  `loading="lazy"` (default) with accurate `sizes`.
 - Always provide `width`/`height` (or a fixed `aspect-ratio` wrapper with `fill`) to
   prevent layout shift. Reserve height for pinned/scroll scenes.
 - Fonts only through `next/font` (self-hosted at build). No Google Fonts `<link>`.

@@ -562,7 +562,8 @@ export const site: SiteConfig = {
     washSeq: {
       desktopPath: "/seq/wash/f_",
       mobilePath: "/seq/wash-m/f_",
-      desktopCount: 120,
+      // Desktop subsampled 120 -> 80 (~12fps equivalent, first + last kept).
+      desktopCount: 80,
       mobileCount: 96,
       pad: 4,
       ext: "webp",
@@ -588,7 +589,9 @@ export const site: SiteConfig = {
     coatingSeq: {
       desktopPath: "/frames/coating/f-",
       mobilePath: "/frames/coating-m/f-",
-      desktopCount: 90,
+      // Desktop subsampled 90 -> 60 (~12fps equivalent, first + last kept);
+      // edge.json desktop array subsampled with the same mapping.
+      desktopCount: 60,
       mobileCount: 60,
       pad: 4,
       ext: "webp",
@@ -597,12 +600,13 @@ export const site: SiteConfig = {
       // Car sits center-low; keep it in frame on portrait stages.
       focus: { x: 0.5, y: 0.6 },
     },
-    // FFmpeg: assets/keys-sun.mp4.mp4 → desktop 18fps/1600w (108 frames),
+    // FFmpeg: assets/keys-sun.mp4.mp4 → desktop 18fps/1600w, subsampled
+    // 108 -> 72 (~12fps equivalent, first + last kept);
     // mobile 12fps/900w (72 frames).
     sunSeq: {
       desktopPath: "/frames/sun/f-",
       mobilePath: "/frames/sun-m/f-",
-      desktopCount: 108,
+      desktopCount: 72,
       mobileCount: 72,
       pad: 4,
       ext: "webp",

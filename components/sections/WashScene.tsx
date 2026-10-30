@@ -128,13 +128,13 @@ export default function WashScene() {
             import("@/lib/washParticles")
               .then(({ createWashParticles }) => {
                 if (disposed) return;
-                // Lighter pools on smaller/low-power devices.
+                // Lighter pools on smaller/low-power devices (~15 mobile / 40 max).
                 const cap =
                   window.innerWidth <= 768
-                    ? 25
+                    ? 15
                     : window.innerWidth <= 1024
-                      ? 30
-                      : 60;
+                      ? 28
+                      : 40;
                 engine = createWashParticles(canvasEl, stageEl, cap);
                 if (particlesActive && !isLowPerf()) engine.start();
               })

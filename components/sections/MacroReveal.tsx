@@ -175,7 +175,7 @@ export default function MacroReveal() {
         {/* Both plates share one zoom wrapper so the wipe stays aligned. */}
         <div
           ref={zoom}
-          className="absolute inset-0 will-change-transform"
+          className="absolute inset-0"
           style={{ transformOrigin: "62% 42%" }}
         >
           <div className="absolute inset-0">

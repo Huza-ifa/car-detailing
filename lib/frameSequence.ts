@@ -1,24 +1,29 @@
 /**
  * Shared canvas frame-sequence player for scrubbed scenes (coating wipe,
- * payoff sun flood). Owns the DPR-capped cover-fit canvas, the rAF-batched
- * draw queue, sequential decoding that starts only when the scene is near
- * the viewport, and pause/cleanup while off-screen.
+ * payoff sun flood). Owns the DPR-capped cover-fit canvas, one shared
+ * gsap.ticker draw queue, batched decoding that starts only when the scene
+ * is near the viewport, and windowed frame release for memory.
  *
- * - Frames decode in order; the first decoded frame paints immediately so
- *   the plate is never empty when the user arrives (poster).
- * - Mobile decodes straight to right-sized ImageBitmaps where available
- *   (full-res bitmaps for 100+ frames would hold far too much memory);
- *   desktop keeps <img> so the browser's LRU decoded-image cache manages
- *   the set.
+ * - Frames decode in BATCHES of 10; between batches the loader yields to
+ *   requestIdleCallback (short-timeout fallback) so decoding never starves
+ *   scroll. The first decoded frame paints immediately (poster).
+ * - Frames decode to right-sized ImageBitmaps where available (desktop and
+ *   mobile), so drawImage skips per-draw decode work. Browsers without
+ *   createImageBitmap fall back to <img>.
+ * - WINDOWED RELEASE: only frames near the current scrub index stay decoded;
+ *   far frames are closed (bitmap.close()) / dropped and re-decoded on demand
+ *   (HTTP-cached, so re-decodes are cheap).
  * - `minLoadedFraction` keeps a scene on its poster until that fraction of
  *   the sequence is decoded (e.g. 0.8 = don't advance until 80% loaded).
  * - `focusX`/`focusY` (0–1) pick which part of the frame survives the
  *   cover-fit crop — portrait stages crop the sides, so the car stays in
- *   view by focusing the keep-window (e.g. 50% 60%).
+ *   view by focusing the keep-window.
  * - DPR is capped at 1.5, or 1.25 on low-core-count (low-end) devices.
  * - `reduced` skips the preloader/observer entirely and paints only the
  *   final frame (the static end state).
  */
+
+import { gsap } from "@/lib/gsap";
 
 export type FrameSource = HTMLImageElement | ImageBitmap;
 
@@ -31,12 +36,14 @@ export interface FrameSequenceOptions {
   count: number;
   pad: number;
   ext: string;
-  /** Source frame pixel dimensions (drives mobile bitmap downsizing). */
+  /** Source frame pixel dimensions (drives bitmap downsizing). */
   width: number;
   height: number;
   desktop: boolean;
   /** Preloading starts when the stage enters this IO rootMargin. */
   preloadMargin?: string;
+  /** Frames kept decoded on each side of the current index. */
+  window?: number;
   /**
    * Fraction (0–1) of frames that must decode before frames other than the
    * poster (frame 1) may paint. 0 = draw as soon as each frame decodes.
@@ -57,11 +64,18 @@ export interface FrameSequenceOptions {
 export interface FrameSequenceHandle {
   /** Paint a frame now (cover-fit). No-op unless the index changed. */
   draw: (index: number, force?: boolean) => void;
-  /** rAF-batched draw for scrub updates — never double-draws a frame. */
+  /** Ticker-batched draw for scrub updates — never double-draws a frame. */
   queueDraw: (index: number) => void;
   /** Drop listeners, observers and any queued work. */
   dispose: () => void;
 }
+
+/** Frames kept decoded on each side of the current index. */
+const KEEP_WINDOW_DESKTOP = 16;
+const KEEP_WINDOW_MOBILE = 16;
+const BATCH_SIZE = 10;
+/** Bitmap decode target width cap — bounds bitmap memory per frame. */
+const BITMAP_MAX_WIDTH = 1280;
 
 export function createFrameSequence(
   options: FrameSequenceOptions,
@@ -77,6 +91,7 @@ export function createFrameSequence(
     height,
     desktop,
     preloadMargin = "160% 0px",
+    window: keepWindow,
     minLoadedFraction = 0,
     focusX = 0.5,
     focusY = 0.5,
@@ -84,14 +99,21 @@ export function createFrameSequence(
     onAfterDraw,
   } = options;
 
+  const windowRadius = keepWindow ?? (desktop ? KEEP_WINDOW_DESKTOP : KEEP_WINDOW_MOBILE);
+
   const ctx2d = canvas.getContext("2d");
   if (!ctx2d) {
     return { draw: () => undefined, queueDraw: () => undefined, dispose: () => undefined };
   }
 
   const frames: Array<FrameSource | null> = new Array(count).fill(null);
+  const pending = new Set<number>();
   let current = -1; // last successfully painted index
-  let loaded = 0; // frames decoded so far
+  let loaded = 0; // frames decoded so far (monotonic)
+  let dirty = false;
+  let rafTarget = 0;
+  let offscreen = false;
+  let disposed = false;
   const minLoaded = Math.ceil(minLoadedFraction * count);
 
   const frameUrl = (index: number) =>
@@ -112,7 +134,22 @@ export function createFrameSequence(
   };
   size();
 
+  const releaseFrame = (index: number) => {
+    const f = frames[index];
+    if (!f) return;
+    if (typeof ImageBitmap !== "undefined" && f instanceof ImageBitmap) f.close();
+    frames[index] = null;
+  };
+
+  const releaseFar = (index: number) => {
+    for (let i = 0; i < count; i += 1) {
+      if (i === index) continue;
+      if (Math.abs(i - index) > windowRadius) releaseFrame(i);
+    }
+  };
+
   const draw = (index: number, force = false) => {
+    if (disposed) return;
     const clamped = Math.min(count - 1, Math.max(0, Math.round(index)));
     // Only paint when the frame index actually changed (or forced, e.g.
     // after a resize).
@@ -141,24 +178,102 @@ export function createFrameSequence(
       dw,
       dh,
     );
+    // Drop frames far from the new index (bitmaps closed, imgs dropped).
+    releaseFar(clamped);
     if (onAfterDraw) onAfterDraw(clamped);
   };
 
-  // Scrub updates queue one rAF each — never double-draws a frame.
-  let raf: number | null = null;
-  let rafTarget = 0;
-  const queueDraw = (index: number) => {
-    rafTarget = index;
-    if (raf !== null) return;
-    raf = window.requestAnimationFrame(() => {
-      raf = null;
-      draw(rafTarget);
+  /** Decode a single frame on demand (HTTP cache makes re-decodes cheap). */
+  const ensureFrame = (index: number) => {
+    if (frames[index] || pending.has(index) || disposed) return;
+    pending.add(index);
+    void decodeFrame(index).then((decoded) => {
+      pending.delete(index);
+      if (!decoded || disposed) return;
+      frames[index] = decoded;
+      if (index + 1 > loaded) loaded = index + 1;
+      // Paint only if this frame is still the wanted one.
+      if (index === rafTarget && !offscreen) draw(index, true);
     });
   };
-  const stopRaf = () => {
-    if (raf !== null) {
-      window.cancelAnimationFrame(raf);
-      raf = null;
+
+  // --- shared gsap.ticker draw queue (no per-player rAF loops) --------------
+  const update = () => {
+    if (!dirty || offscreen || disposed) return;
+    dirty = false;
+    if (frames[rafTarget]) draw(rafTarget);
+    else ensureFrame(rafTarget);
+  };
+  gsap.ticker.add(update);
+
+  const queueDraw = (index: number) => {
+    const clamped = Math.min(count - 1, Math.max(0, Math.round(index)));
+    if (clamped === current) return;
+    rafTarget = clamped;
+    dirty = true;
+  };
+
+  // --- bitmap/img decode ----------------------------------------------------
+  const decodeFrame = async (index: number): Promise<FrameSource | null> => {
+    const url = frameUrl(index + 1);
+    if (typeof createImageBitmap === "function") {
+      try {
+        const blob = await (await fetch(url)).blob();
+        const targetW = Math.min(canvas.width || 900, desktop ? BITMAP_MAX_WIDTH : width);
+        const bmp = await createImageBitmap(blob, {
+          resizeWidth: targetW,
+          resizeHeight: Math.max(1, Math.round((targetW * height) / width)),
+          resizeQuality: "medium",
+        });
+        return bmp;
+      } catch {
+        /* fall through to <img> decode */
+      }
+    }
+    const img = new Image();
+    img.decoding = "async";
+    img.src = url;
+    try {
+      await img.decode();
+      return img;
+    } catch {
+      // decode() can reject on some machines (GPU/driver quirks, memory
+      // pressure) even though the image is fine — fall back to the load
+      // event before giving up on the frame.
+      if (img.complete && img.naturalWidth > 0) return img;
+      return await new Promise<FrameSource | null>((resolve) => {
+        img.onload = () => resolve(img.naturalWidth > 0 ? img : null);
+        img.onerror = () => resolve(null);
+      });
+    }
+  };
+
+  /** Decode frames in batches, yielding to idle time between batches. */
+  const idle = (cb: () => void) => {
+    const ric = (
+      window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }
+    ).requestIdleCallback;
+    if (ric) ric(cb, { timeout: 400 });
+    else window.setTimeout(cb, 150);
+  };
+
+  const preloadSeq = async () => {
+    for (let start = 0; start < count; start += BATCH_SIZE) {
+      if (disposed) return;
+      const end = Math.min(count, start + BATCH_SIZE);
+      const batch: Promise<FrameSource | null>[] = [];
+      for (let i = start; i < end; i += 1) batch.push(decodeFrame(i));
+      const decoded = await Promise.all(batch);
+      if (disposed) return;
+      for (let k = 0; k < decoded.length; k += 1) {
+        frames[start + k] = decoded[k];
+        if (decoded[k] && start + k + 1 > loaded) loaded = start + k + 1;
+      }
+      // First decoded frame paints immediately so the plate is never empty
+      // when the user arrives.
+      if (start === 0) draw(0, true);
+      // Yield to the main thread between batches.
+      if (end < count) await new Promise<void>((r) => idle(() => r()));
     }
   };
 
@@ -183,69 +298,26 @@ export function createFrameSequence(
     return {
       draw,
       queueDraw,
-      dispose: () => window.removeEventListener("resize", onResize),
+      dispose: () => {
+        disposed = true;
+        gsap.ticker.remove(update);
+        window.removeEventListener("resize", onResize);
+        releaseFar(count - 1);
+        releaseFrame(count - 1);
+      },
     };
   }
 
   // --- sequential decode, started near the viewport -------------------------
-  let disposed = false;
-
-  const decodeFrame = async (index: number): Promise<FrameSource | null> => {
-    const url = frameUrl(index + 1);
-    if (!desktop && typeof createImageBitmap === "function") {
-      try {
-        const blob = await (await fetch(url)).blob();
-        const targetW = Math.min(canvas.width || 900, width);
-        return await createImageBitmap(blob, {
-          resizeWidth: targetW,
-          resizeHeight: Math.max(1, Math.round((targetW * height) / width)),
-          resizeQuality: "medium",
-        });
-      } catch {
-        /* fall through to <img> decode */
-      }
-    }
-    const img = new Image();
-    img.decoding = "async";
-    img.src = url;
-    try {
-      await img.decode();
-      return img;
-    } catch {
-      // decode() can reject on some machines (GPU/driver quirks, memory
-      // pressure) even though the image is fine — fall back to the load
-      // event before giving up on the frame.
-      if (img.complete && img.naturalWidth > 0) return img;
-      return await new Promise<FrameSource | null>((resolve) => {
-        img.onload = () => resolve(img.naturalWidth > 0 ? img : null);
-        img.onerror = () => resolve(null);
-      });
-    }
-  };
-
-  const preloadSeq = async () => {
-    for (let i = 0; i < count; i += 1) {
-      if (disposed) return;
-      const decoded = await decodeFrame(i);
-      if (disposed) return;
-      frames[i] = decoded;
-      loaded = i + 1;
-      // First decoded frame paints immediately so the plate is never empty
-      // when the user arrives.
-      if (i === 0) draw(0, true);
-    }
-  };
-
-  // Preload + redraws only while the scene is near/on screen, and the
-  // preloader starts exactly once even if the observer re-fires.
-  let inView = false;
   let preloadStarted = false;
+  let inView = false;
   const io = new IntersectionObserver(
     (entries) => {
       const visible = entries.some((entry) => entry.isIntersecting);
       if (visible === inView) return;
       inView = visible;
-      if (inView) {
+      offscreen = !visible;
+      if (!offscreen) {
         window.addEventListener("resize", onResize, { passive: true });
         if (!preloadStarted) {
           preloadStarted = true;
@@ -255,7 +327,9 @@ export function createFrameSequence(
       } else {
         // Off-screen: release the resize listener and any queued draw.
         window.removeEventListener("resize", onResize);
-        stopRaf();
+        dirty = false;
+        // Memory: release everything except the current poster/plate.
+        releaseFar(current < 0 ? 0 : current);
       }
     },
     { rootMargin: preloadMargin },
@@ -268,8 +342,9 @@ export function createFrameSequence(
     dispose: () => {
       disposed = true;
       io.disconnect();
+      gsap.ticker.remove(update);
       window.removeEventListener("resize", onResize);
-      stopRaf();
+      for (let i = 0; i < count; i += 1) releaseFrame(i);
     },
   };
 }

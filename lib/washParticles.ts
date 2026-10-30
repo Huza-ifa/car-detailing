@@ -6,6 +6,8 @@
  * or in a Server Component.
  */
 
+import { gsap } from "@/lib/gsap";
+
 const CYAN = "34,211,238";
 const WHITE = "255,255,255";
 
@@ -32,7 +34,7 @@ export interface ParticleEngine {
 export function createWashParticles(
   canvas: HTMLCanvasElement,
   stage: HTMLElement,
-  max = 60,
+  max = 40,
 ): ParticleEngine {
   const ctx2d = canvas.getContext("2d");
   if (!ctx2d) {
@@ -109,8 +111,6 @@ export function createWashParticles(
   let poolIndex = 0;
   let edgeX = 0;
   let running = false;
-  let rafId = 0;
-  let lastTime = 0;
 
   const spawn = () => {
     const p = pool[poolIndex];
@@ -167,24 +167,23 @@ export function createWashParticles(
     ctx2d.globalCompositeOperation = "source-over";
   };
 
-  const loop = (now: number) => {
+  // Draw loop rides the shared gsap.ticker (no separate rAF loop); the
+  // ticker passes deltaTime in milliseconds.
+  const tick = (_time: number, deltaTime: number) => {
     if (!running) return;
-    const dt = Math.min(0.05, Math.max(0, (now - lastTime) / 1000));
-    lastTime = now;
+    const dt = Math.min(0.05, Math.max(0, deltaTime / 1000));
     drawParticles(dt);
-    rafId = requestAnimationFrame(loop);
   };
 
   const start = () => {
     if (running) return;
     running = true;
-    lastTime = performance.now();
-    rafId = requestAnimationFrame(loop);
+    gsap.ticker.add(tick);
   };
 
   const stop = () => {
     running = false;
-    cancelAnimationFrame(rafId);
+    gsap.ticker.remove(tick);
     ctx2d.clearRect(0, 0, dims.w, dims.h);
   };
 
