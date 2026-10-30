@@ -110,7 +110,8 @@ customHttp.yml         AWS Amplify cache headers (/frames, /assets, /_next/stati
 
 /public/img              Optimized AVIF/WebP assets; see public/img/README.md
 /public/seq/wash, /wash-m FFmpeg wash-video frames, scrubbed img-src swap by WashScene
-                        (desktop 40 / mobile 24; even-resampled, first + last kept)
+                        (desktop 40 — frame 1 1280w, frames 2-40 1024w — / mobile 24;
+                        even-resampled, first + last kept)
 /public/frames/coating, /coating-m FFmpeg coating-wipe frame sequence (scrubbed canvas
                         player in CoatingScene; desktop 40 / mobile 24) + edge.json
                         measured wipe-edge map (per-frame arrays, remapped in lockstep)
@@ -348,7 +349,9 @@ Scene transitions are **triggered timelines**, not long scrubs:
   Every set is even-resampled with first + last kept, hard caps: ≤40 desktop /
   ≤24 mobile (wash 120→40, coating 90→40, sun 108→40; mobile 96/60/72→24),
   recompressed to ≤1400px wide q62 (<60KB/frame) desktop and 800px q58
-  (<30KB/frame) mobile; `edge.json` remapped in lockstep (desktop 40 / mobile 24
+  (<30KB/frame) mobile; the wash set goes further — hero frame 1 stays 1280w
+  (crisp LCP) while frames 2–40 are 1024w (max ~20KB, total ~0.73 MB);
+  `edge.json` remapped in lockstep (desktop 40 / mobile 24
   entries) — the measured 60-entry curve from the original analysis, resampled
   with the same mapping, then re-monotonized + smoothed.
 - Canvas draws ride the shared `gsap.ticker` (no per-player rAF loops): draws fire

@@ -563,8 +563,9 @@ export const site: SiteConfig = {
       desktopPath: "/seq/wash/f_",
       mobilePath: "/seq/wash-m/f_",
       // Desktop subsampled 120 -> 40, mobile 96 -> 24 (even resample, first +
-      // last kept); recompressed: desktop ≤1400w q62 (<60KB/frame), mobile
-      // 800w q58 (<30KB/frame).
+      // last kept); recompressed: mobile 800w q58 (<30KB/frame), desktop
+      // q62 with frame 1 (hero poster/LCP) at 1280w and frames 2-40 at
+      // 1024w (<20KB each). All 16:9 — cover-fit math unaffected.
       desktopCount: 40,
       mobileCount: 24,
       pad: 4,
