@@ -25,12 +25,11 @@ import { site } from "@/config/site";
  *
  * The sweep line does NOT run on raw scroll progress: it follows the
  * measured wipe edge for the current frame (public/frames/coating/
- * edge.json — per-frame 0-1 fractions produced by a one-time analysis
- * script; monotonic + smoothed). The fraction is frame-space, so it is
- * mapped through the canvas cover-fit (scale + centering offset) to get the
- * on-screen position. The line fades out while the edge is parked at the
- * frame borders (no wipe visible there in the footage). SEAL PROGRESS
- * stays on raw scroll progress.
+ * edge.json — per-frame 0-1 fractions; monotonic + smoothed). The fraction
+ * is frame-space, so it is mapped through the canvas cover-fit (scale +
+ * centering offset) to get the on-screen position, and SEAL PROGRESS
+ * displays the same fraction. The line fades out while the edge is parked
+ * at the frame borders (no wipe visible there in the footage).
  *
  * Canvas/decode work lives in the shared player (lib/frameSequence.ts):
  * frames preload sequentially once the scene is NEAR the viewport (never on
@@ -220,16 +219,17 @@ export default function CoatingScene() {
             // (scale + centering offset) so the on-screen position matches
             // the footage. Falls back to raw progress until edge.json has
             // arrived. Parked at the frame borders there is no edge to
-            // mark, so the line fades in/out there. The METER stays on raw
-            // scroll progress — the footage has no persistent edge to read.
+            // mark, so the line fades in/out there. SEAL PROGRESS reads
+            // the SAME value — the meter tracks the wipe edge, not raw
+            // scroll.
             const f = edges?.[idx] ?? p;
             const fit = Math.max(stageW / seq.width, stageH / seq.height);
             const drawW = seq.width * fit;
             const drawX = (stageW - drawW) * seq.focus.x;
             setEdgeX(drawX + f * drawW);
             setEdgeAlpha(Math.max(0, Math.min(1, f / 0.04, (1 - f) / 0.04)));
-            setMeterFill(p);
-            const meterPct = Math.round(p * 100);
+            setMeterFill(f);
+            const meterPct = Math.round(f * 100);
             if (meterPct !== lastMeterPct) {
               lastMeterPct = meterPct;
               meterValueEl.textContent = `${meterPct}${meterUnit}`;

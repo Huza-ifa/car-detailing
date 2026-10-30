@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { site } from "@/config/site";
 
 export default function robots(): MetadataRoute.Robots {
   return {
@@ -6,5 +7,6 @@ export default function robots(): MetadataRoute.Robots {
       userAgent: "*",
       allow: "/",
     },
+    sitemap: `${site.seo.url}/sitemap.xml`,
   };
 }

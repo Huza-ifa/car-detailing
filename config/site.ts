@@ -562,9 +562,11 @@ export const site: SiteConfig = {
     washSeq: {
       desktopPath: "/seq/wash/f_",
       mobilePath: "/seq/wash-m/f_",
-      // Desktop subsampled 120 -> 80 (~12fps equivalent, first + last kept).
-      desktopCount: 80,
-      mobileCount: 96,
+      // Desktop subsampled 120 -> 40, mobile 96 -> 24 (even resample, first +
+      // last kept); recompressed: desktop ≤1400w q62 (<60KB/frame), mobile
+      // 800w q58 (<30KB/frame).
+      desktopCount: 40,
+      mobileCount: 24,
       pad: 4,
       ext: "webp",
       width: 1280,
@@ -589,29 +591,30 @@ export const site: SiteConfig = {
     coatingSeq: {
       desktopPath: "/frames/coating/f-",
       mobilePath: "/frames/coating-m/f-",
-      // Desktop subsampled 90 -> 60 (~12fps equivalent, first + last kept);
-      // edge.json desktop array subsampled with the same mapping.
-      desktopCount: 60,
-      mobileCount: 60,
+      // Desktop subsampled 90 -> 40, mobile 60 -> 24 (even resample, first +
+      // last kept); recompressed to ≤1400w / 800w. edge.json was remapped in
+      // lockstep (desktop 40 / mobile 24 entries).
+      desktopCount: 40,
+      mobileCount: 24,
       pad: 4,
       ext: "webp",
-      width: 1600,
-      height: 900,
+      width: 1400,
+      height: 788,
       // Car sits center-low; keep it in frame on portrait stages.
       focus: { x: 0.5, y: 0.6 },
     },
     // FFmpeg: assets/keys-sun.mp4.mp4 → desktop 18fps/1600w, subsampled
-    // 108 -> 72 (~12fps equivalent, first + last kept);
-    // mobile 12fps/900w (72 frames).
+    // 108 -> 40; mobile 12fps/900w subsampled 72 -> 24 (even resample,
+    // first + last kept; recompressed to ≤1400w / 800w).
     sunSeq: {
       desktopPath: "/frames/sun/f-",
       mobilePath: "/frames/sun-m/f-",
-      desktopCount: 72,
-      mobileCount: 72,
+      desktopCount: 40,
+      mobileCount: 24,
       pad: 4,
       ext: "webp",
-      width: 1600,
-      height: 900,
+      width: 1400,
+      height: 788,
       // Car sits center-low; keep it in frame on portrait stages.
       focus: { x: 0.5, y: 0.6 },
     },

@@ -13,7 +13,7 @@ A premium car-detailing marketing site for **BRAND** in **CITY**.
 
 The experience is dark, cinematic, and scroll-driven: a bold condensed display face,
 generous negative space, near-black surfaces, cyan highlights, and one single amber
-"payoff" moment at the end. Copy is short and confident. Motion is smooth, never
+"payoff" moment right after the hero wash. Copy is short and confident. Motion is smooth, never
 gratuitous, and always accessible.
 
 Business goals, in order:
@@ -37,7 +37,7 @@ Business goals, in order:
 | Backend      | Supabase JS                                  | browser client factory in `/lib`          |
 | Fonts        | `next/font/google`                           | Bebas Neue + Inter                       |
 | Images       | `next/image`                                 | static export: `unoptimized` (see §7)    |
-| Hosting      | Netlify                                      | static export (`out/`), `netlify.toml`; **zip deploys must use forward-slash entry paths** (`.NET ZipArchive`/`bsdtar` — never `Compress-Archive`, whose backslash entries 404 every nested asset) |
+| Hosting      | AWS Amplify (GitHub deploy)                  | static export (`out/`); `customHttp.yml` sets immutable cache for `/frames/**`, `/assets/**`, `/_next/static/**` |
 | Asset tools  | `sharp` (devDep) + FFmpeg (winget build)     | raw `assets/` → optimized `public/img`    |
 
 Commands:
@@ -93,7 +93,7 @@ only `NEXT_PUBLIC_*` values may reach the browser.
                         (services/addOns data retained; the Services section was
                         removed from the homepage by user request)
 
-netlify.toml           Netlify deploy: builds static export from /out
+customHttp.yml         AWS Amplify cache headers (/frames, /assets, /_next/static)
 /lib
   gsap.ts               Registers ScrollTrigger once; exports gsap/ScrollTrigger + queries
   supabase.ts           Browser Supabase client factory (lazy, env-guarded)
@@ -110,12 +110,12 @@ netlify.toml           Netlify deploy: builds static export from /out
 
 /public/img              Optimized AVIF/WebP assets; see public/img/README.md
 /public/seq/wash, /wash-m FFmpeg wash-video frames, scrubbed img-src swap by WashScene
-                        (desktop 80 / mobile 96; desktop subsampled to ~12fps eq.)
+                        (desktop 40 / mobile 24; even-resampled, first + last kept)
 /public/frames/coating, /coating-m FFmpeg coating-wipe frame sequence (scrubbed canvas
-                        player in CoatingScene; desktop 60 / mobile 60) + edge.json
-                        measured wipe-edge map (per-frame arrays, subsampled in lockstep)
+                        player in CoatingScene; desktop 40 / mobile 24) + edge.json
+                        measured wipe-edge map (per-frame arrays, remapped in lockstep)
 /public/frames/sun, /sun-m FFmpeg sun-flood frame sequence (scrubbed canvas player in
-                        Payoff; desktop 72 / mobile 72; desktop subsampled to ~12fps eq.)
+                        Payoff; desktop 40 / mobile 24; even-resampled, first + last kept)
 ```
 
 Rules:
@@ -337,13 +337,20 @@ Scene transitions are **triggered timelines**, not long scrubs:
 - Images are AVIF/WebP (`next.config.mjs` formats, in that order). Source assets live in
   `/public/img`.
 - Frame loading strategy (all scrub sequences): IO-gated — nothing loads at page
-  load; frames decode in batches of 10 with `requestIdleCallback` between batches;
+  load except frame 1 of each scene (poster) and the hero wash's initial ramp;
+  frames decode in batches of 8–10 with `requestIdleCallback` between batches;
   frame 1 paints as soon as it decodes (DOM poster `<img>` underneath as failsafe).
-  Frames decode to right-sized `createImageBitmap`s (width-capped) with windowed
-  release — only ±16 frames around the current index stay decoded; far frames are
-  closed and re-decoded on demand (HTTP-cached). Desktop sets >60 frames are
-  subsampled to ~12fps equivalent (first + last kept): wash 120→80, coating 90→60,
-  sun 108→72; `edge.json` subsampled in lockstep.
+  Preloading arms at a 150% IO margin (~1.5 screens); scrolling far past the scene
+  ABORTS in-flight batches (AbortController) and re-entering resumes from the
+  first missing frame. Frames decode to right-sized `createImageBitmaps`
+  (width-capped) with windowed release — only ±16 frames around the current index
+  stay decoded; far frames are closed and re-decoded on demand (HTTP-cached).
+  Every set is even-resampled with first + last kept, hard caps: ≤40 desktop /
+  ≤24 mobile (wash 120→40, coating 90→40, sun 108→40; mobile 96/60/72→24),
+  recompressed to ≤1400px wide q62 (<60KB/frame) desktop and 800px q58
+  (<30KB/frame) mobile; `edge.json` remapped in lockstep (desktop 40 / mobile 24
+  entries) — the measured 60-entry curve from the original analysis, resampled
+  with the same mapping, then re-monotonized + smoothed.
 - Canvas draws ride the shared `gsap.ticker` (no per-player rAF loops): draws fire
   only when the frame index actually changes, DPR capped at 1.5 (1.25 low-core),
   all drawing stops while a scene is off-screen.
@@ -352,9 +359,9 @@ Scene transitions are **triggered timelines**, not long scrubs:
 - `ScrollTrigger.refresh()` runs once after the page settles — fonts-ready and
   window-load funnel into a single debounced refresh in SmoothScroll, plus the
   debounced resize handler. Never one refresh per event.
-- Raster priority: Payoff's opening poster `<img>` is the LCP element and uses
-  `priority`; the CoatingScene poster and every other raster image use
-  `loading="lazy"` (default) with accurate `sizes`.
+- Raster priority: the hero wash `<img>` (frame 1 of the wash sequence) is the LCP
+  element; the Payoff poster is second-scene and lazy; the CoatingScene poster and
+  every other raster image use `loading="lazy"` (default) with accurate `sizes`.
 - Always provide `width`/`height` (or a fixed `aspect-ratio` wrapper with `fill`) to
   prevent layout shift. Reserve height for pinned/scroll scenes.
 - Fonts only through `next/font` (self-hosted at build). No Google Fonts `<link>`.
@@ -402,17 +409,19 @@ Guidelines:
 
 | # | Component       | id          | Scene intent                                                      | Status      |
 | - | --------------- | ----------- | ----------------------------------------------------------------- | ----------- |
-| 1 | `Payoff`        | `payoff`    | **Opening scene + page h1.** Scrubbed sun-flood canvas sequence, shared player (~120/100vh pin, scrub 0.5, static DOM poster img under the canvas — failsafe if the player can't run —, glow ramp 60→100% + warm vignette, tel: CTA; NO scroll lock). **Only section allowed to use amber.** | built       |
-| 2 | `WashScene`     | `wash`      | Pinned wash scrub: real wash video frame sequence + sweep, meter (~190vh desktop / ~100svh mobile pin, no snap) | built      |
+| 1 | `WashScene`     | `wash`      | **Hero — opens the page, holds the sr-only h1.** Pinned wash scrub: real wash video frame sequence + sweep, meter (~190vh desktop / ~100svh mobile pin, no snap) | built      |
+| 2 | `Payoff`        | `payoff`    | Scrubbed sun-flood canvas sequence, shared player (~120/100vh pin, scrub 0.5, static DOM poster img under the canvas — failsafe if the player can't run —, glow ramp 60→100% + warm vignette, tel: CTA; NO scroll lock). **Only section allowed to use amber.** | built       |
 | 3 | `MacroReveal`   | `macro`     | Scrubbed macro scene: "LOOK CLOSER." → "SWIRLS. EVERYWHERE." → lens clip reveal → "SWIRLS OUT. GLASS ON." (~100vh pin, no snap; no scroll lock, no ring) | built       |
-| 4 | `CoatingScene`  | `coating`   | Scrubbed coating-wipe canvas sequence, wash-scene grammar: "NOW SEAL IT." → "SEALED. SHINE LOCKED IN." + chips (~150vh desktop / ~100svh mobile pin, no snap, sweep line driven by the measured edge map `edge.json` + meter on scroll progress, static DOM poster img under the canvas, NO scroll lock) | built       |
+| 4 | `CoatingScene`  | `coating`   | Scrubbed coating-wipe canvas sequence, wash-scene grammar: "NOW SEAL IT." → "SEALED. SHINE LOCKED IN." + chips (~150vh desktop / ~100svh mobile pin, no snap, sweep line + SEAL PROGRESS meter both driven by the measured edge map `edge.json` (scroll-progress fallback until it loads), static DOM poster img under the canvas, NO scroll lock) | built       |
 | 5 | `Proof`         | `proof`     | Reviews + before/after gallery (2 cards, 3-layer parallax, replaying count-up stats, draggable comparisons, 4s testimonial rotation, desktop tilt ≤4°; no pin, no lock) | built       |
 | 6 | `Footer`        | `contact`   | Closing statement + curtain contact block, giant cropped brand + 6s sheen (light parallax only, no lock, no CTA stage) | built       |
 
-Order (changed by user request — Services section removed from the homepage, footer
-CTA stage removed, Payoff swapped ahead of the Hero, then the Hero section removed
-entirely and the component + its `lib/scrollLock.ts` dependency deleted in the
-finalize pass): Payoff → Wash → Macro → Coating → Proof → Footer. Booking flows
+Order (user-requested final-polish reorder: the hero wash opens the page and the
+sunlight payoff follows it; earlier history — Services section removed from the
+homepage, footer CTA stage removed, Payoff swapped ahead of the Hero, then the Hero
+section removed entirely and the component + its `lib/scrollLock.ts` dependency
+deleted in the finalize pass): Wash → Payoff → Macro → Coating → Proof → Footer.
+Booking flows
 through the Payoff `tel:` CTA
 and the navbar CTA (→ `#contact`) until the booking drawer ships; `Services`/`ServicesCopy`
 data stays in config for reuse. The homepage renders them in this order.
@@ -421,8 +430,8 @@ data stays in config for reuse. The homepage renders them in this order.
 
 ## 10. Accessibility & SEO
 
-- One `<h1>` per page, in the opening Payoff scene (the Hero section was removed;
-  its headline slot moved there). Sections use `<h2>`.
+- One `<h1>` per page, on the hero wash (visually hidden — the opening scene's
+  stage copy stays the scrub labels). Sections use `<h2>`.
 - Landmarks: single `<main id="main">`, `<nav aria-label="Primary">`, `<footer>`.
 - Skip link is provided in the root layout. Keep it working.
 - Focus states: visible cyan outline (`:focus-visible` in globals). Never remove outlines.

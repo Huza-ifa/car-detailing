@@ -90,7 +90,7 @@ export function createFrameSequence(
     width,
     height,
     desktop,
-    preloadMargin = "160% 0px",
+    preloadMargin = "150% 0px",
     window: keepWindow,
     minLoadedFraction = 0,
     focusX = 0.5,
@@ -214,11 +214,14 @@ export function createFrameSequence(
   };
 
   // --- bitmap/img decode ----------------------------------------------------
-  const decodeFrame = async (index: number): Promise<FrameSource | null> => {
+  const decodeFrame = async (
+    index: number,
+    signal?: AbortSignal,
+  ): Promise<FrameSource | null> => {
     const url = frameUrl(index + 1);
     if (typeof createImageBitmap === "function") {
       try {
-        const blob = await (await fetch(url)).blob();
+        const blob = await (await fetch(url, { signal })).blob();
         const targetW = Math.min(canvas.width || 900, desktop ? BITMAP_MAX_WIDTH : width);
         const bmp = await createImageBitmap(blob, {
           resizeWidth: targetW,
@@ -227,6 +230,9 @@ export function createFrameSequence(
         });
         return bmp;
       } catch {
+        // Aborted fetches must NOT fall through to the <img> fallback —
+        // that would defeat the cancellation.
+        if (signal?.aborted) return null;
         /* fall through to <img> decode */
       }
     }
@@ -257,23 +263,34 @@ export function createFrameSequence(
     else window.setTimeout(cb, 150);
   };
 
-  const preloadSeq = async () => {
+  /**
+   * Decode the whole sequence in batches. Aborted when the user scrolls far
+   * past the scene; a later IO re-enter resumes from the first missing
+   * frame (already-decoded frames are skipped).
+   */
+  const preloadSeq = async (signal: AbortSignal) => {
     for (let start = 0; start < count; start += BATCH_SIZE) {
-      if (disposed) return;
+      if (disposed || signal.aborted) return;
       const end = Math.min(count, start + BATCH_SIZE);
-      const batch: Promise<FrameSource | null>[] = [];
-      for (let i = start; i < end; i += 1) batch.push(decodeFrame(i));
-      const decoded = await Promise.all(batch);
-      if (disposed) return;
-      for (let k = 0; k < decoded.length; k += 1) {
-        frames[start + k] = decoded[k];
-        if (decoded[k] && start + k + 1 > loaded) loaded = start + k + 1;
+      const batch: Array<{ index: number; promise: Promise<FrameSource | null> }> = [];
+      for (let i = start; i < end; i += 1) {
+        if (!frames[i]) batch.push({ index: i, promise: decodeFrame(i, signal) });
       }
-      // First decoded frame paints immediately so the plate is never empty
-      // when the user arrives.
-      if (start === 0) draw(0, true);
-      // Yield to the main thread between batches.
-      if (end < count) await new Promise<void>((r) => idle(() => r()));
+      if (batch.length > 0) {
+        const decoded = await Promise.all(batch.map((b) => b.promise));
+        if (disposed || signal.aborted) return;
+        for (let k = 0; k < batch.length; k += 1) {
+          const { index } = batch[k];
+          if (decoded[k]) frames[index] = decoded[k];
+          if (decoded[k] && index + 1 > loaded) loaded = index + 1;
+        }
+        // First decoded frame paints immediately so the plate is never
+        // empty when the user arrives.
+        if (start === 0) draw(0, true);
+        // Yield to the main thread between batches.
+        await new Promise<void>((r) => idle(() => r()));
+        if (signal.aborted) return;
+      }
     }
   };
 
@@ -308,9 +325,10 @@ export function createFrameSequence(
     };
   }
 
-  // --- sequential decode, started near the viewport -------------------------
+  // --- batched decode, started near the viewport, cancelled far past -------
   let preloadStarted = false;
   let inView = false;
+  let preloadAbort: AbortController | null = null;
   const io = new IntersectionObserver(
     (entries) => {
       const visible = entries.some((entry) => entry.isIntersecting);
@@ -321,11 +339,18 @@ export function createFrameSequence(
         window.addEventListener("resize", onResize, { passive: true });
         if (!preloadStarted) {
           preloadStarted = true;
-          void preloadSeq();
+          // Fresh controller per run: a previous run aborted mid-flight
+          // leaves its loop returning asynchronously.
+          preloadAbort = new AbortController();
+          void preloadSeq(preloadAbort.signal);
         }
         draw(current, true);
       } else {
-        // Off-screen: release the resize listener and any queued draw.
+        // Scrolled far past (~1.5 screens beyond the margin): cancel any
+        // queued batches; a later re-enter resumes from the first missing
+        // frame. Also release the resize listener and any queued draw.
+        preloadAbort?.abort();
+        preloadStarted = false;
         window.removeEventListener("resize", onResize);
         dirty = false;
         // Memory: release everything except the current poster/plate.
@@ -341,6 +366,7 @@ export function createFrameSequence(
     queueDraw,
     dispose: () => {
       disposed = true;
+      preloadAbort?.abort();
       io.disconnect();
       gsap.ticker.remove(update);
       window.removeEventListener("resize", onResize);

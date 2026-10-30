@@ -9,11 +9,12 @@ export default function Home() {
   return (
     <>
       <main id="main" className="relative">
-        {/* Sunshine payoff opens the page with the brand statement (h1).
-            The Hero section was removed and deleted by user request
-            (finalize pass). */}
-        <Payoff />
+        {/* Hero wash opens the page (the h1 lives there, sr-only). The
+            sunlight payoff statement + booking CTA follows, then the macro
+            story and the coating seal (user-requested order, final polish
+            pass). */}
         <WashScene />
+        <Payoff />
         <MacroReveal />
         <CoatingScene />
         <Proof />

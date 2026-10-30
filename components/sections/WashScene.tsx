@@ -53,7 +53,7 @@ export default function WashScene() {
           ).matches;
           const desktop = wide && !touch;
 
-          // Frame set per breakpoint: desktop 120 / mobile 96, never upscaled.
+          // Frame set per breakpoint: desktop 40 / mobile 24, never upscaled.
           const base = desktop ? seq.desktopPath : seq.mobilePath;
           const count = desktop ? seq.desktopCount : seq.mobileCount;
 
@@ -155,15 +155,27 @@ export default function WashScene() {
           }
 
           // Preload the rest of the sequence only once we are near the
-          // viewport — never on page load (both breakpoints).
+          // viewport — never on page load (both breakpoints). Scrolling far
+          // past cancels the queue; re-entering resumes whatever is left.
+          const remaining = () =>
+            Array.from({ length: count }, (_, k) => k + 1).filter(
+              (i) => !preloaded.includes(i),
+            );
+          let restInView = false;
           const restIO = new IntersectionObserver(
             (entries) => {
-              if (entries.some((entry) => entry.isIntersecting)) {
-                restIO.disconnect();
-                void preload(Array.from({ length: count }, (_, k) => k + 1));
+              const visible = entries.some((entry) => entry.isIntersecting);
+              if (visible === restInView) return;
+              restInView = visible;
+              if (visible) {
+                aborted = false;
+                void preload(remaining());
+              } else {
+                // Far past the ~1.5-screen margin — stop feeding the queue.
+                aborted = true;
               }
             },
-            { rootMargin: "120% 0px" },
+            { rootMargin: "150% 0px" },
           );
           restIO.observe(stageEl);
 
@@ -291,6 +303,9 @@ export default function WashScene() {
       ref={root}
       className="relative bg-background [--car-focus:50%_50%]"
     >
+      {/* Page h1 lives on the hero wash (visually hidden — the stage copy
+          stays the scrub labels, design unchanged). */}
+      <h1 className="sr-only">{site.seo.title}</h1>
       <div
         ref={stage}
         className="stage-full relative w-full overflow-hidden"

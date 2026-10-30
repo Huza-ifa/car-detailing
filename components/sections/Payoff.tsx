@@ -24,8 +24,9 @@ import { site } from "@/config/site";
  * brightness 0.7→1 + a small upward slide), the CTA fading in, and the
  * faint warm vignette at the end. No scroll lock; scrolling back reverses.
  *
- * Frames preload sequentially once the scene is within ~2 screens of the
- * viewport (200% IO margin, started exactly once). Frame 1 paints as soon
+ * Frames preload once the scene is within ~1.5 screens of the viewport
+ * (150% IO margin), in batches with idle gaps; loading cancels while the
+ * scene is scrolled far past and resumes on return. Frame 1 paints as soon
  * as it decodes and acts as the poster; the sequence only starts advancing
  * once ≥80% of frames are decoded. Rendering pauses off-screen.
  * Reduced motion paints the final frame with the static end-state copy.
@@ -35,7 +36,7 @@ import { site } from "@/config/site";
  */
 
 /** How far ahead of the viewport (in viewport heights) preloading starts. */
-const PRELOAD_MARGIN = "200% 0px";
+const PRELOAD_MARGIN = "150% 0px";
 
 /** Fraction of the sequence that must decode before scrubbing advances. */
 const MIN_LOADED = 0.8;
@@ -204,12 +205,12 @@ export default function Payoff() {
         ref={stage}
         className="stage-full relative w-full overflow-hidden"
       >
-        {/* Static poster under the canvas (fail-safe) — scrub by scroll above */}
+        {/* Static poster under the canvas (fail-safe) — scrub by scroll above.
+            Second scene now, so no priority: the wash hero is the LCP. */}
         <Image
           src={posterUrl}
           alt=""
           fill
-          priority
           sizes="100vw"
           className="absolute inset-0 z-0 h-full w-full object-cover"
         />
@@ -239,7 +240,7 @@ export default function Payoff() {
         {/* stage copy, lower left — glow + brightness + slide ramp 60→100% */}
         <div className="pointer-events-none absolute bottom-24 left-6 z-40 md:bottom-32 md:left-16">
           <div ref={glow}>
-            <h1 className="text-display">
+            <h2 className="text-display">
               {copy.headlineLines.map((line, index) => (
                 <span
                   key={line.text}
@@ -254,7 +255,7 @@ export default function Payoff() {
                   {line.text}
                 </span>
               ))}
-            </h1>
+            </h2>
 
             <div className="mt-10 md:mt-12">
               {/* Booking drawer ships later — the CTA drives phone bookings. */}
